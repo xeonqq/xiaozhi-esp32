@@ -14,6 +14,10 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 
+#ifdef SH1106
+#include <esp_lcd_panel_sh1106.h>
+#endif
+
 #define TAG "ESP32-MarsbearSupport"
 
 class CompactWifiBoard : public WifiBoard {
@@ -72,7 +76,11 @@ private:
         };
         panel_config.vendor_config = &ssd1306_config;
 
+#ifdef SH1106
+        ESP_ERROR_CHECK(esp_lcd_new_panel_sh1106(panel_io_, &panel_config, &panel_));
+#else
         ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(panel_io_, &panel_config, &panel_));
+#endif
         ESP_LOGI(TAG, "SSD1306 driver installed");
 
         // Reset the display
