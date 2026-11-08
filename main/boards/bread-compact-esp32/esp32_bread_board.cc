@@ -14,6 +14,10 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 
+#ifdef SH1106
+#include <esp_lcd_panel_sh1106.h>
+#endif
+
 #define TAG "ESP32-MarsbearSupport"
 
 class CompactWifiBoard : public WifiBoard {
@@ -62,7 +66,7 @@ private:
 
         ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(display_i2c_bus_, &io_config, &panel_io_));
 
-        ESP_LOGI(TAG, "Install SSD1306 driver");
+        ESP_LOGI(TAG, "Install OLED driver");
         esp_lcd_panel_dev_config_t panel_config = {};
         panel_config.reset_gpio_num = GPIO_NUM_NC;
         panel_config.bits_per_pixel = 1;
@@ -72,8 +76,13 @@ private:
         };
         panel_config.vendor_config = &ssd1306_config;
 
+#ifdef SH1106
+        ESP_ERROR_CHECK(esp_lcd_new_panel_sh1106(panel_io_, &panel_config, &panel_));
+        ESP_LOGI(TAG, "SH1106 driver installed");
+#else
         ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(panel_io_, &panel_config, &panel_));
         ESP_LOGI(TAG, "SSD1306 driver installed");
+#endif
 
         // Reset the display
         ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_));
