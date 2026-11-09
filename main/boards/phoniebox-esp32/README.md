@@ -31,6 +31,9 @@ Notes:
 
 - Use a 3.3 V supply for the SD card and the RC522. The MAX98357A may be
   powered from 5 V; share ground with the ESP32.
+- Both 4-byte UID tags (MIFARE Classic) and 7-byte UID tags (NTAG,
+  MIFARE Ultralight, DESFire and similar) are supported. A 7-byte UID
+  produces a 14-character UID string in the web interface.
 - GPIO 34 is input-only, which is fine for the microphone data line.
 - The OLED uses SDA 4 and SCL 15, matching the `bread-compact-esp32` board.
   GPIO 15 is a strapping pin, but the OLED's I2C pull-ups keep it high during

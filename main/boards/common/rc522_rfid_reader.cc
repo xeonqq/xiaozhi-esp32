@@ -23,6 +23,7 @@ constexpr uint8_t kBitFramingReg = 0x0D;
 constexpr uint8_t kModeReg = 0x11;
 constexpr uint8_t kTxControlReg = 0x14;
 constexpr uint8_t kTxASKReg = 0x15;
+constexpr uint8_t kCollReg = 0x0E;
 constexpr uint8_t kRFCfgReg = 0x26;
 constexpr uint8_t kTModeReg = 0x2A;
 constexpr uint8_t kTPrescalerReg = 0x2B;
@@ -37,11 +38,14 @@ constexpr uint8_t kPcdSoftReset = 0x0F;
 
 // PICC commands / values.
 constexpr uint8_t kPiccReqA = 0x26;
+constexpr uint8_t kPiccWupA = 0x52;
 constexpr uint8_t kPiccAnticoll = 0x93;
+constexpr uint8_t kPiccCascadeLevel2 = 0x95;
 constexpr uint8_t kPiccSelect = 0x93;
 constexpr uint8_t kPiccHalt = 0x50;
 constexpr uint8_t kPiccNvbAnticoll = 0x20;
 constexpr uint8_t kPiccNvbSelect = 0x70;
+constexpr uint8_t kCascadeTag = 0x88;
 
 // ComIrqReg bits.
 constexpr uint8_t kIrqTimer = 0x01;
@@ -147,9 +151,38 @@ bool Rc522RfidReader::Initialize() {
     AntennaOn();
     SetAntennaGain(7);
 
+    // Temporary bring-up diagnostics: verify the RF configuration actually
+    // stuck. Expected: TxControl 0x83, RFCfg 0x78, TxASK 0x40, Mode 0x3D,
+    // TMode 0x80, TPrescaler 0xA9, reload 0x03E8.
+    ESP_LOGI(TAG, "MFRC522 config: TxControl 0x%02X RFCfg 0x%02X TxASK 0x%02X Mode 0x%02X "
+                  "TMode 0x%02X TPre 0x%02X Reload 0x%02X%02X",
+             ReadRegister(kTxControlReg), ReadRegister(kRFCfgReg), ReadRegister(kTxASKReg),
+             ReadRegister(kModeReg), ReadRegister(kTModeReg), ReadRegister(kTPrescalerReg),
+             ReadRegister(kTReloadRegH), ReadRegister(kTReloadRegL));
+
     ready_ = true;
     ESP_LOGI(TAG, "MFRC522 ready (SPI %d MHz)", static_cast<int>(clock_hz_ / 1000000));
     return true;
+}
+
+void Rc522RfidReader::LogCardDiagnostic(uint16_t atqa) {
+    int64_t now = esp_timer_get_time();
+    if (now - last_diag_us_ < kDiagLogIntervalUs) {
+        return;
+    }
+    last_diag_us_ = now;
+    ESP_LOGW(TAG, "Card in the field (ATQA 0x%04X) but the UID could not be read", atqa);
+}
+
+void Rc522RfidReader::LogPollDiagnostic() {
+    int64_t now = esp_timer_get_time();
+    if (now - last_diag_us_ < kDiagLogIntervalUs) {
+        return;
+    }
+    last_diag_us_ = now;
+    // Temporary bring-up diagnostic for the no-PICC case.
+    ESP_LOGW(TAG, "No PICC response (ComIrq 0x%02X Error 0x%02X FifoLevel 0x%02X)",
+             ReadRegister(kComIrqReg), ReadRegister(kErrorReg), ReadRegister(kFifoLevelReg));
 }
 
 bool Rc522RfidReader::ReadCard(std::string& uid) {
@@ -163,24 +196,61 @@ bool Rc522RfidReader::ReadCard(std::string& uid) {
             card_present_ = false;
             last_uid_.clear();
         }
+        LogPollDiagnostic();
         return false;
     }
 
-    uint8_t uid_bytes[5] = {};
-    uint8_t uid_length = 0;
-    if (!Anticoll(uid_bytes, uid_length)) {
+    // Cascade level 1. The answer is always five bytes: four UID bytes plus
+    // the BCC. A 7-byte UID card puts the cascade tag (0x88) in place of
+    // UID3 and continues with a second anticollision round.
+    uint8_t buffer[5] = {};
+    uint8_t length = 0;
+    if (!Anticoll(kPiccAnticoll, buffer, length)) {
+        LogCardDiagnostic(atqa);
         return false;
+    }
+
+    uint8_t uid_bytes[7] = {};
+    uint8_t uid_length = 0;
+    if (buffer[0] == kCascadeTag) {
+        if ((buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3]) != buffer[4]) {
+            return false;
+        }
+        std::memcpy(uid_bytes, &buffer[1], 3);
+
+        uint8_t level2[5] = {};
+        if (!Anticoll(kPiccCascadeLevel2, level2, length)) {
+            LogCardDiagnostic(atqa);
+            return false;
+        }
+        if ((level2[0] ^ level2[1] ^ level2[2] ^ level2[3]) != level2[4]) {
+            return false;
+        }
+        std::memcpy(&uid_bytes[3], level2, 4);
+        uid_length = 7;
+    } else {
+        if ((buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3]) != buffer[4]) {
+            return false;
+        }
+        std::memcpy(uid_bytes, buffer, 4);
+        uid_length = 4;
     }
 
     last_seen_us_ = esp_timer_get_time();
-    std::string current_uid = ToHex(uid_bytes, 4);
+    std::string current_uid = ToHex(uid_bytes, uid_length);
 
     if (card_present_ && current_uid == last_uid_) {
         Halt();
         return false;
     }
 
-    Select(uid_bytes, uid_length);
+    if (uid_length == 7) {
+        // Selecting happens at the deepest cascade level with its four UID
+        // bytes.
+        Select(kPiccCascadeLevel2, &uid_bytes[3], 4);
+    } else {
+        Select(kPiccSelect, uid_bytes, 4);
+    }
     Halt();
 
     card_present_ = true;
@@ -230,7 +300,11 @@ bool Rc522RfidReader::RequestA(uint16_t& atqa) {
     WriteRegister(kComIEnReg, 0x00);
     WriteRegister(kComIrqReg, 0x7F);
     WriteRegister(kFifoLevelReg, 0x80);
-    WriteRegister(kFifoDataReg, kPiccReqA);
+    // Do not clear values received after a collision.
+    ClearRegisterBitMask(kCollReg, 0x20);
+    // WUPA instead of REQA: a card left in the HALT state by an earlier
+    // session only answers to WUPA, and this driver polls continuously.
+    WriteRegister(kFifoDataReg, kPiccWupA);
     WriteRegister(kBitFramingReg, 0x07);
 
     WriteRegister(kCommandReg, kPcdTransceive);
@@ -254,13 +328,13 @@ bool Rc522RfidReader::RequestA(uint16_t& atqa) {
     return true;
 }
 
-bool Rc522RfidReader::Anticoll(uint8_t* uid, uint8_t& length) {
+bool Rc522RfidReader::Anticoll(uint8_t sel_code, uint8_t* buffer, uint8_t& length) {
     WriteRegister(kCommandReg, kPcdIdle);
     WriteRegister(kComIEnReg, 0x00);
     WriteRegister(kComIrqReg, 0x7F);
     WriteRegister(kFifoLevelReg, 0x80);
 
-    const uint8_t frame[] = {kPiccAnticoll, kPiccNvbAnticoll};
+    const uint8_t frame[] = {sel_code, kPiccNvbAnticoll};
     WriteFifo(frame, sizeof(frame));
     WriteRegister(kBitFramingReg, 0x00);
     WriteRegister(kCommandReg, kPcdTransceive);
@@ -274,33 +348,31 @@ bool Rc522RfidReader::Anticoll(uint8_t* uid, uint8_t& length) {
     if ((ReadRegister(kErrorReg) & kErrorMask) != 0) {
         return false;
     }
+    // The anticollision answer is always five bytes: four UID bytes (or the
+    // cascade tag plus three UID bytes) and the BCC.
     if (ReadRegister(kFifoLevelReg) != 0x05) {
         return false;
     }
 
-    uint8_t buffer[5] = {};
-    ReadFifo(buffer, sizeof(buffer));
-    // The fifth byte is the BCC: XOR of the four UID bytes.
-    uint8_t bcc = static_cast<uint8_t>(buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3]);
-    if (bcc != buffer[4]) {
-        return false;
-    }
-
-    std::memcpy(uid, buffer, 4);
-    length = 4;
+    length = 0x05;
+    ReadFifo(buffer, length);
     return true;
 }
 
-bool Rc522RfidReader::Select(const uint8_t* uid, uint8_t length) {
+bool Rc522RfidReader::Select(uint8_t sel_code, const uint8_t* uid, uint8_t length) {
     WriteRegister(kCommandReg, kPcdIdle);
     WriteRegister(kComIEnReg, 0x00);
     WriteRegister(kComIrqReg, 0x7F);
     WriteRegister(kFifoLevelReg, 0x80);
 
-    uint8_t frame[7] = {kPiccSelect, kPiccNvbSelect};
+    uint8_t frame[11] = {sel_code, kPiccNvbSelect};
     std::memcpy(&frame[2], uid, length);
-    frame[2 + length] = static_cast<uint8_t>(uid[0] ^ uid[1] ^ uid[2] ^ uid[3]);
-    WriteFifo(frame, sizeof(frame));
+    uint8_t bcc = 0;
+    for (uint8_t i = 0; i < length; ++i) {
+        bcc = static_cast<uint8_t>(bcc ^ uid[i]);
+    }
+    frame[2 + length] = bcc;
+    WriteFifo(frame, static_cast<size_t>(length) + 3);
     WriteRegister(kBitFramingReg, 0x00);
     WriteRegister(kCommandReg, kPcdTransceive);
     SetRegisterBitMask(kBitFramingReg, 0x80);

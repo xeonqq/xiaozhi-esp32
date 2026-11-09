@@ -10,7 +10,8 @@
 
 namespace {
 constexpr const char* kNamespace = "phoniebox";
-constexpr size_t kMaxKeyLength = 15;  // NVS limit, including the terminator.
+// NVS allows keys of at most 15 characters; add one for the terminator.
+constexpr size_t kMaxKeyLength = 16;
 constexpr size_t kMaxNameLength = 96;
 }  // namespace
 

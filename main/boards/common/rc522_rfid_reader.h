@@ -29,14 +29,17 @@ public:
 
 private:
     static constexpr int64_t kCardRemoveTimeoutUs = 500 * 1000;
+    static constexpr int64_t kDiagLogIntervalUs = 30 * 1000 * 1000;
 
     bool DetectVersion();
     bool SoftReset();
     void AntennaOn();
     void SetAntennaGain(uint8_t gain);
     bool RequestA(uint16_t& atqa);
-    bool Anticoll(uint8_t* uid, uint8_t& length);
-    bool Select(const uint8_t* uid, uint8_t length);
+    void LogCardDiagnostic(uint16_t atqa);
+    void LogPollDiagnostic();
+    bool Anticoll(uint8_t sel_code, uint8_t* buffer, uint8_t& length);
+    bool Select(uint8_t sel_code, const uint8_t* uid, uint8_t length);
     void Halt();
     bool WaitForCommand(uint8_t irq_mask);
 
@@ -56,6 +59,7 @@ private:
     bool ready_ = false;
     bool card_present_ = false;
     int64_t last_seen_us_ = 0;
+    int64_t last_diag_us_ = 0;
     std::string last_uid_;
 };
 
