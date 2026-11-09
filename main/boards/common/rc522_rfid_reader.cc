@@ -195,7 +195,7 @@ bool Rc522RfidReader::DetectVersion() {
         ESP_LOGE(TAG, "Unexpected MFRC522 version 0x%02X", version);
         return false;
     }
-    ESP_LOGD(TAG, "Firmware version 0x%02X", version);
+    ESP_LOGI(TAG, "MFRC522 firmware version 0x%02X", version);
     return true;
 }
 
@@ -340,7 +340,9 @@ bool Rc522RfidReader::WaitForCommand(uint8_t irq_mask) {
 }
 
 uint8_t Rc522RfidReader::ReadRegister(uint8_t reg) {
-    uint8_t tx_buffer[2] = {static_cast<uint8_t>((reg << 1) & 0x7E), 0x00};
+    // MFRC522 SPI address byte: bit 7 set for reads, bits 6:1 hold the address.
+    // Without the read flag the transaction is a write and MISO stays idle.
+    uint8_t tx_buffer[2] = {static_cast<uint8_t>(((reg << 1) & 0x7E) | 0x80), 0x00};
     uint8_t rx_buffer[2] = {};
     spi_transaction_t transaction = {};
     transaction.length = sizeof(tx_buffer) * 8;
