@@ -43,6 +43,9 @@ AudioService::~AudioService() {
     if (output_resampler_ != nullptr) {
         esp_ae_rate_cvt_close(output_resampler_);
     }
+    if (music_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(music_resampler_);
+    }
 }
 
 void AudioService::Initialize(AudioCodec* codec) {
@@ -626,6 +629,81 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
     audio_decode_queue_.push_back(std::move(packet));
     audio_queue_cv_.notify_all();
     return true;
+}
+
+bool AudioService::PushPcmToPlaybackQueue(std::vector<int16_t>&& pcm, int sample_rate,
+                                          int channels) {
+    if (pcm.empty() || sample_rate <= 0 || channels <= 0 || codec_ == nullptr) {
+        return false;
+    }
+
+    // Mix down to mono. Music decoders normally produce mono or stereo.
+    if (channels == 2 && (pcm.size() % 2) == 0) {
+        std::vector<int16_t> mono(pcm.size() / 2);
+        for (size_t i = 0; i < mono.size(); ++i) {
+            int32_t mixed = static_cast<int32_t>(pcm[i * 2]) + pcm[i * 2 + 1];
+            mono[i] = static_cast<int16_t>(mixed / 2);
+        }
+        pcm = std::move(mono);
+    } else if (channels > 1) {
+        std::vector<int16_t> mono(pcm.size() / channels);
+        for (size_t i = 0; i < mono.size(); ++i) {
+            mono[i] = pcm[i * channels];
+        }
+        pcm = std::move(mono);
+    }
+
+    const int output_rate = codec_->output_sample_rate();
+    if (sample_rate != output_rate) {
+        std::lock_guard<std::mutex> resampler_lock(music_resampler_mutex_);
+        if (music_resampler_ == nullptr || music_resampler_src_rate_ != sample_rate) {
+            if (music_resampler_ != nullptr) {
+                esp_ae_rate_cvt_close(music_resampler_);
+                music_resampler_ = nullptr;
+            }
+            esp_ae_rate_cvt_cfg_t cfg = RATE_CVT_CFG(sample_rate, output_rate, ESP_AUDIO_MONO);
+            auto ret = esp_ae_rate_cvt_open(&cfg, &music_resampler_);
+            if (music_resampler_ == nullptr) {
+                ESP_LOGE(TAG, "Failed to create music resampler, error code: %d", ret);
+                return false;
+            }
+            music_resampler_src_rate_ = sample_rate;
+        }
+
+        uint32_t target_size = 0;
+        esp_ae_rate_cvt_get_max_out_sample_num(music_resampler_, pcm.size(), &target_size);
+        std::vector<int16_t> resampled(target_size);
+        uint32_t actual_output = target_size;
+        esp_ae_rate_cvt_process(music_resampler_, (esp_ae_sample_t)pcm.data(), pcm.size(),
+                                (esp_ae_sample_t)resampled.data(), &actual_output);
+        resampled.resize(actual_output);
+        pcm = std::move(resampled);
+    }
+
+    AudioTask task;
+    task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task.pcm = std::move(pcm);
+
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    audio_queue_cv_.wait(lock, [this]() {
+        return service_stopped_.load() ||
+               audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE;
+    });
+    if (service_stopped_.load()) {
+        return false;
+    }
+
+    playback_drained_notified_ = false;
+    audio_playback_queue_.push_back(std::move(task));
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+void AudioService::ResetMusicResampler() {
+    std::lock_guard<std::mutex> resampler_lock(music_resampler_mutex_);
+    if (music_resampler_ != nullptr) {
+        esp_ae_rate_cvt_reset(music_resampler_);
+    }
 }
 
 std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {

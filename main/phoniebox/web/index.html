@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phoniebox</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header>
+    <h1>Phoniebox</h1>
+    <div class="pills">
+      <span id="pill-sd" class="pill">SD card</span>
+      <span id="pill-rfid" class="pill">RFID</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Now playing</h2>
+      <div id="now-title" class="now-title">Nothing playing</div>
+      <div id="now-detail" class="muted"></div>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <div class="controls">
+        <button id="btn-previous" title="Previous">&#9198;</button>
+        <button id="btn-toggle" class="primary" title="Play / pause">&#9654;</button>
+        <button id="btn-next" title="Next">&#9197;</button>
+        <button id="btn-stop" title="Stop">&#9632;</button>
+      </div>
+      <label class="volume">
+        <span>Volume <output id="volume-value">0</output></span>
+        <input id="volume" type="range" min="0" max="100" step="1">
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Last scanned card</h2>
+      <div id="last-tag" class="muted">No card scanned yet</div>
+      <form id="assign-form">
+        <label>UID
+          <input id="tag-uid" autocomplete="off" placeholder="Scan a card first">
+        </label>
+        <label>Name
+          <input id="tag-name" autocomplete="off" placeholder="Bedtime songs">
+        </label>
+        <label>Folder or file
+          <input id="tag-path" autocomplete="off" placeholder="/sdcard/music/bedtime">
+        </label>
+        <div class="row">
+          <button type="submit" class="primary">Save assignment</button>
+          <button type="button" id="assign-play">Play now</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>SD card</h2>
+      <div id="browser-path" class="mono muted">/sdcard</div>
+      <div class="row">
+        <button id="browser-up" type="button">Up</button>
+        <button id="browser-root" type="button">Root</button>
+      </div>
+      <ul id="browser" class="list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Assignments</h2>
+      <ul id="tags" class="list"></ul>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

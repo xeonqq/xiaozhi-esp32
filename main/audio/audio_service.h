@@ -143,6 +143,16 @@ public:
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    /**
+     * Queue already-decoded PCM for playback through the speaker.
+     *
+     * Used by the local music player. The PCM may be mono or stereo and at any
+     * sample rate; it is mixed down to mono and resampled to the codec rate.
+     * Blocks while the playback queue is full, so call it from a dedicated
+     * task (never the audio output task).
+     */
+    bool PushPcmToPlaybackQueue(std::vector<int16_t>&& pcm, int sample_rate, int channels);
+    void ResetMusicResampler();
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
@@ -160,6 +170,9 @@ private:
     std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;
+    std::mutex music_resampler_mutex_;
+    esp_ae_rate_cvt_handle_t music_resampler_ = nullptr;
+    int music_resampler_src_rate_ = 0;
 
     // Encoder/Decoder state
     int encoder_sample_rate_ = 16000;

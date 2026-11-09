@@ -7,6 +7,9 @@
 #include "display.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
+#if CONFIG_PHONIEBOX_ENABLED
+#include "phoniebox_service.h"
+#endif
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
@@ -178,6 +181,13 @@ void Application::Initialize() {
 
     // Start network asynchronously
     board.StartNetwork();
+
+#if CONFIG_PHONIEBOX_ENABLED
+    // RFID, SD card music playback, and the local web interface are optional
+    // additions to the standard XiaoZhi voice assistant. Initialize after the
+    // network stack so the HTTP server can create its sockets.
+    PhonieboxService::GetInstance().Initialize();
+#endif
 
     // Update the status bar immediately to show the network state
     display->UpdateStatusBar(true);
@@ -1028,6 +1038,13 @@ void Application::HandleStateChangedEvent() {
     auto display = board.GetDisplay();
     auto led = board.GetLed();
     led->OnStateChanged();
+
+#if CONFIG_PHONIEBOX_ENABLED
+    if (new_state == kDeviceStateConnecting || new_state == kDeviceStateListening ||
+        new_state == kDeviceStateSpeaking || new_state == kDeviceStateNotifying) {
+        PhonieboxService::GetInstance().PauseForInteraction();
+    }
+#endif
 
     switch (new_state) {
         case kDeviceStateUnknown:

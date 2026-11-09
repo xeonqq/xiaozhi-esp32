@@ -442,6 +442,14 @@ choice BOARD_TYPE
     config BOARD_TYPE_OTTO_ROBOT
         bool "Otto Robot"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_ESP32_PHONIEBOX
+        bool "Phoniebox ESP32 (RC522 + SD card + MAX98357A)"
+        depends on IDF_TARGET_ESP32
+        help
+            Classic ESP32 Phoniebox: MFRC522 RFID reader and SD card share one
+            SPI bus, MAX98357A output and INMP441 input use I2S, and an
+            optional OLED shows status. Includes the RFID music player and
+            its web interface.
     config BOARD_TYPE_QUANDONG_S3_DEV_2_8_LCD
         bool "Quandong ESP32-S3 2.8-inch SPI LCD (全动 2.8寸)"
         depends on IDF_TARGET_ESP32S3
@@ -681,6 +689,15 @@ choice BOARD_TYPE
         depends on IDF_TARGET_ESP32S3
 endchoice
 
+config PHONIEBOX_ENABLED
+    bool "Enable Phoniebox RFID music player and web interface"
+    default y if BOARD_TYPE_ESP32_PHONIEBOX
+    help
+        Play music from the SD card when a registered RFID tag is presented,
+        and expose a small web interface for managing tag assignments and
+        controlling playback. Requires a board that provides an RfidReader and
+        a Storage instance.
+
 config RESPEAKER_I2S_EXTERNAL_CLOCK_48K
     bool "ReSpeaker: XMOS supplies 48 kHz I2S clocks"
     depends on BOARD_TYPE_SEEED_XIAO_ESP32S3_RESPEAKER_XVF3800
@@ -800,7 +817,7 @@ choice WK_ESP32S3_DEV_DISPLAY_TYPE
 endchoice
 
 choice DISPLAY_OLED_TYPE
-    depends on BOARD_TYPE_BREAD_COMPACT_WIFI || BOARD_TYPE_BREAD_COMPACT_ML307 || BOARD_TYPE_BREAD_COMPACT_NT26 || BOARD_TYPE_BREAD_COMPACT_ESP32 || BOARD_TYPE_HU_087 || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_OLED)
+    depends on BOARD_TYPE_BREAD_COMPACT_WIFI || BOARD_TYPE_BREAD_COMPACT_ML307 || BOARD_TYPE_BREAD_COMPACT_NT26 || BOARD_TYPE_BREAD_COMPACT_ESP32 || BOARD_TYPE_ESP32_PHONIEBOX || BOARD_TYPE_HU_087 || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_OLED)
     prompt "OLED Type"
     default OLED_SSD1306_128X32
     help

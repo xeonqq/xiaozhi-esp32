@@ -103,6 +103,8 @@ elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_NT26)
     set(BOARD_DIR "bread-compact-nt26")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_14_1)
     set(BUILTIN_ICON_FONT font_material_symbols_14_1)
+elseif(CONFIG_BOARD_TYPE_ESP32_PHONIEBOX)
+    set(BOARD_DIR "phoniebox-esp32")
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ESP32)
     set(BOARD_DIR "bread-compact-esp32")
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ESP32_LCD)
@@ -1016,6 +1018,23 @@ endif()
 if (CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING)
     list(APPEND SOURCES "boards/common/blufi.cpp")
 endif ()
+
+if(CONFIG_PHONIEBOX_ENABLED)
+    list(APPEND SOURCES
+        "boards/common/rc522_rfid_reader.cc"
+        "boards/common/spi_sd_card.cc"
+        "phoniebox/music_player.cc"
+        "phoniebox/tag_store.cc"
+        "phoniebox/phoniebox_service.cc"
+        "phoniebox/phoniebox_web_server.cc"
+    )
+    list(APPEND INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/phoniebox")
+    set(PHONIEBOX_WEB_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/phoniebox/web/index.html"
+        "${CMAKE_CURRENT_SOURCE_DIR}/phoniebox/web/app.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/phoniebox/web/app.js"
+    )
+endif()
 # Select language directory according to Kconfig
 if(CONFIG_LANGUAGE_ZH_CN)
     set(LANG_DIR "zh-CN")
@@ -1192,8 +1211,15 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
         sdmmc
     )
 endif()
+if(CONFIG_PHONIEBOX_ENABLED)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
+        esp_http_server
+        esp_driver_sdspi
+        sdmmc
+    )
+endif()
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PHONIEBOX_WEB_FILES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
