@@ -14,6 +14,7 @@ played. A small web interface manages tag assignments and playback.
 | SD card | CS | 5 |
 | MFRC522 / RC522 | CS | 21 |
 | MFRC522 / RC522 | RST | 17 |
+| MFRC522 / RC522 | IRQ (optional) | 22 |
 | MAX98357A | BCLK | 27 |
 | MAX98357A | LRC / WS | 26 |
 | MAX98357A | DIN | 25 |
@@ -44,12 +45,19 @@ Notes:
   through separate build variants; they use the same I2C wiring.
 - The 4 MB build keeps the standard 4 MB partition table. The 8 MB build uses
   `partitions/v2/8m.csv`.
-- The RC522 receiver gain defaults to the maximum and is controlled by
-  `CONFIG_PHONIEBOX_RC522_RX_GAIN` (0-7). Lower it if the reader picks up tags
-  that are too far away. `scripts/build.py` regenerates `sdkconfig` on every
-  run, so either add `CONFIG_PHONIEBOX_RC522_RX_GAIN=<n>` to the variant's
-  `sdkconfig_append` in `config.json`, or set it in `menuconfig` and flash with
-  `idf.py` immediately afterwards.
+- The RC522 receiver gain defaults to 4 (33 dB, the chip reset value and the
+  value used by the common Linux/Phoniebox driver) and is controlled by
+  `CONFIG_PHONIEBOX_RC522_RX_GAIN` (0-7). Higher values increase read range but
+  can saturate the receiver when a tag is held directly against the antenna, so
+  try 3-6 if detection is unreliable rather than jumping to 7.
+  `scripts/build.py` regenerates `sdkconfig` on every run, so either add
+  `CONFIG_PHONIEBOX_RC522_RX_GAIN=<n>` to the variant's `sdkconfig_append` in
+  `config.json`, or set it in `menuconfig` and flash with `idf.py` immediately
+  afterwards.
+- Power the RC522 from a solid 3.3 V rail and keep the module a few centimetres
+  away from the ESP32 antenna and any metal. A 100 uF electrolytic plus a
+  100 nF ceramic capacitor across the RC522 3.3 V/GND pins avoids field
+  dropouts during Wi-Fi transmit bursts.
 
 ## SD card layout
 

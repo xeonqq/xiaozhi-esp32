@@ -86,6 +86,19 @@ std::string ToHex(const uint8_t* data, size_t length) {
     return result;
 }
 
+// ISO/IEC 14443-3 CRC_A (poly 0x8408, preset 0x6363). The two results bytes
+// are transmitted LSB first after the data.
+uint16_t CrcA(const uint8_t* data, size_t length) {
+    uint16_t crc = 0x6363;
+    for (size_t i = 0; i < length; ++i) {
+        uint8_t byte = static_cast<uint8_t>(data[i] ^ (crc & 0xFF));
+        byte = static_cast<uint8_t>(byte ^ (byte << 4));
+        crc = static_cast<uint16_t>((crc >> 8) ^ (static_cast<uint16_t>(byte) << 8) ^
+                                    (static_cast<uint16_t>(byte) << 3) ^ (byte >> 4));
+    }
+    return crc;
+}
+
 }  // namespace
 
 Rc522RfidReader::Rc522RfidReader(spi_host_device_t host, gpio_num_t cs_pin, gpio_num_t rst_pin,
@@ -157,14 +170,15 @@ bool Rc522RfidReader::Initialize() {
     WriteRegister(kTxASKReg, 0x40);
     WriteRegister(kModeReg, 0x3D);
 
-    AntennaOn();
+    // Apply the receiver gain before enabling the antenna: some clones latch
+    // the analog configuration when the antenna drivers are switched on.
     SetAntennaGain(rx_gain_);
+    AntennaOn();
     SetupIrq();
 
     // Temporary bring-up diagnostics: verify the RF configuration actually
-    // stuck. Expected: TxControl 0x83, RFCfg with the gain in bits 6:4 (0x78
-    // for the default gain 7), TxASK 0x40, Mode 0x3D, TMode 0x80,
-    // TPrescaler 0xA9, reload 0x03E8.
+    // stuck. Expected with the default gain 4: TxControl 0x83, RFCfg 0x48,
+    // TxASK 0x40, Mode 0x3D, TMode 0x80, TPrescaler 0xA9, reload 0x03E8.
     ESP_LOGI(TAG, "MFRC522 config: TxControl 0x%02X RFCfg 0x%02X TxASK 0x%02X Mode 0x%02X "
                   "TMode 0x%02X TPre 0x%02X Reload 0x%02X%02X",
              ReadRegister(kTxControlReg), ReadRegister(kRFCfgReg), ReadRegister(kTxASKReg),
@@ -191,9 +205,13 @@ void Rc522RfidReader::LogPollDiagnostic() {
         return;
     }
     last_diag_us_ = now;
-    // Temporary bring-up diagnostic for the no-PICC case.
-    ESP_LOGW(TAG, "No PICC response (ComIrq 0x%02X Error 0x%02X FifoLevel 0x%02X IRQ=%d edges=%lu)",
+    // Temporary bring-up diagnostic for the no-PICC case. TxControl/RFCfg
+    // show whether the antenna and receiver gain are still configured.
+    ESP_LOGW(TAG,
+             "No PICC response (ComIrq 0x%02X Error 0x%02X FifoLevel 0x%02X TxControl 0x%02X "
+             "RFCfg 0x%02X IRQ=%d edges=%lu)",
              ReadRegister(kComIrqReg), ReadRegister(kErrorReg), ReadRegister(kFifoLevelReg),
+             ReadRegister(kTxControlReg), ReadRegister(kRFCfgReg),
              irq_pin_ != GPIO_NUM_NC ? gpio_get_level(irq_pin_) : -1,
              static_cast<unsigned long>(irq_edges_));
 }
@@ -231,6 +249,10 @@ bool Rc522RfidReader::ReadCard(std::string& uid) {
         }
         std::memcpy(uid_bytes, &buffer[1], 3);
 
+        // Complete cascade level 1 before starting level 2 anticollision.
+        // The result is not fatal: some cards answer level 2 directly.
+        Select(kPiccAnticoll, buffer, 4);
+
         uint8_t level2[5] = {};
         if (!Anticoll(kPiccCascadeLevel2, level2, length)) {
             LogCardDiagnostic(atqa);
@@ -252,11 +274,9 @@ bool Rc522RfidReader::ReadCard(std::string& uid) {
     last_seen_us_ = esp_timer_get_time();
     std::string current_uid = ToHex(uid_bytes, uid_length);
 
-    if (card_present_ && current_uid == last_uid_) {
-        Halt();
-        return false;
-    }
-
+    // Select before Halt even when the UID is unchanged: HLTA is only accepted
+    // in the ACTIVE state, and a card left in READY stops answering WUPA, so
+    // the next poll would report "No PICC response" forever.
     if (uid_length == 7) {
         // Selecting happens at the deepest cascade level with its four UID
         // bytes.
@@ -265,6 +285,10 @@ bool Rc522RfidReader::ReadCard(std::string& uid) {
         Select(kPiccSelect, uid_bytes, 4);
     }
     Halt();
+
+    if (card_present_ && current_uid == last_uid_) {
+        return false;
+    }
 
     card_present_ = true;
     last_uid_ = current_uid;
@@ -342,36 +366,42 @@ void IRAM_ATTR Rc522RfidReader::IrqIsrHandler(void* arg) {
 }
 
 bool Rc522RfidReader::RequestA(uint16_t& atqa) {
-    WriteRegister(kCommandReg, kPcdIdle);
-    WriteRegister(kComIEnReg, com_ien_value_);
-    WriteRegister(kComIrqReg, 0x7F);
-    WriteRegister(kFifoLevelReg, 0x80);
-    // Do not clear values received after a collision.
-    ClearRegisterBitMask(kCollReg, 0x20);
-    // WUPA instead of REQA: a card left in the HALT state by an earlier
-    // session only answers to WUPA, and this driver polls continuously.
-    WriteRegister(kFifoDataReg, kPiccWupA);
-    WriteRegister(kBitFramingReg, 0x07);
+    auto transceive = [this, &atqa](uint8_t command) -> bool {
+        WriteRegister(kCommandReg, kPcdIdle);
+        WriteRegister(kComIEnReg, com_ien_value_);
+        WriteRegister(kComIrqReg, 0x7F);
+        WriteRegister(kFifoLevelReg, 0x80);
+        // Keep the bits received after a collision (datasheet recommendation
+        // outside bitwise anticollision).
+        SetRegisterBitMask(kCollReg, 0x80);
+        WriteRegister(kFifoDataReg, command);
+        WriteRegister(kBitFramingReg, 0x07);
 
-    WriteRegister(kCommandReg, kPcdTransceive);
-    SetRegisterBitMask(kBitFramingReg, 0x80);
+        WriteRegister(kCommandReg, kPcdTransceive);
+        SetRegisterBitMask(kBitFramingReg, 0x80);
 
-    bool ok = WaitForCommand(kIrqRx);
-    ClearRegisterBitMask(kBitFramingReg, 0x80);
-    if (!ok) {
-        return false;
-    }
-    if ((ReadRegister(kErrorReg) & kErrorMask) != 0) {
-        return false;
-    }
-    if (ReadRegister(kFifoLevelReg) != 0x02) {
-        return false;
-    }
+        bool ok = WaitForCommand(kIrqRx);
+        ClearRegisterBitMask(kBitFramingReg, 0x80);
+        if (!ok) {
+            return false;
+        }
+        if ((ReadRegister(kErrorReg) & kErrorMask) != 0) {
+            return false;
+        }
+        if (ReadRegister(kFifoLevelReg) != 0x02) {
+            return false;
+        }
 
-    uint8_t buffer[2] = {};
-    ReadFifo(buffer, sizeof(buffer));
-    atqa = static_cast<uint16_t>(buffer[0] | (buffer[1] << 8));
-    return true;
+        uint8_t buffer[2] = {};
+        ReadFifo(buffer, sizeof(buffer));
+        atqa = static_cast<uint16_t>(buffer[0] | (buffer[1] << 8));
+        return true;
+    };
+
+    // WUPA wakes cards in the IDLE and HALT states, which is what continuous
+    // polling needs. Some cards and clones do not answer WUPA reliably, so
+    // fall back to REQA (which only wakes IDLE cards).
+    return transceive(kPiccWupA) || transceive(kPiccReqA);
 }
 
 bool Rc522RfidReader::Anticoll(uint8_t sel_code, uint8_t* buffer, uint8_t& length) {
@@ -418,7 +448,12 @@ bool Rc522RfidReader::Select(uint8_t sel_code, const uint8_t* uid, uint8_t lengt
         bcc = static_cast<uint8_t>(bcc ^ uid[i]);
     }
     frame[2 + length] = bcc;
-    WriteFifo(frame, static_cast<size_t>(length) + 3);
+    // SELECT carries a CRC_A after the BCC (the MFRC522 does not append it
+    // automatically because TxCRCEn is not enabled).
+    uint16_t crc = CrcA(frame, static_cast<size_t>(length) + 3);
+    frame[3 + length] = static_cast<uint8_t>(crc & 0xFF);
+    frame[4 + length] = static_cast<uint8_t>(crc >> 8);
+    WriteFifo(frame, static_cast<size_t>(length) + 5);
     WriteRegister(kBitFramingReg, 0x00);
     WriteRegister(kCommandReg, kPcdTransceive);
     SetRegisterBitMask(kBitFramingReg, 0x80);

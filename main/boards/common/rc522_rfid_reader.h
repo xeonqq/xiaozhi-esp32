@@ -17,12 +17,14 @@
  * task at a modest rate (about 50-100 ms).
  *
  * rx_gain selects the receiver gain written to RFCfgReg (0 = minimum,
- * 7 = maximum read range).
+ * 7 = maximum read range). The default of 4 (33 dB) matches the MFRC522 reset
+ * value and the common Linux/Phoniebox driver; the maximum gain can saturate
+ * the receiver when a tag is held directly against the antenna.
  */
 class Rc522RfidReader : public RfidReader {
 public:
     Rc522RfidReader(spi_host_device_t host, gpio_num_t cs_pin, gpio_num_t rst_pin,
-                    gpio_num_t irq_pin = GPIO_NUM_NC, uint8_t rx_gain = 7,
+                    gpio_num_t irq_pin = GPIO_NUM_NC, uint8_t rx_gain = 4,
                     uint32_t clock_hz = 4 * 1000 * 1000);
     ~Rc522RfidReader() override;
 
