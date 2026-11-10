@@ -44,6 +44,12 @@ Notes:
   through separate build variants; they use the same I2C wiring.
 - The 4 MB build keeps the standard 4 MB partition table. The 8 MB build uses
   `partitions/v2/8m.csv`.
+- The RC522 receiver gain defaults to the maximum and is controlled by
+  `CONFIG_PHONIEBOX_RC522_RX_GAIN` (0-7). Lower it if the reader picks up tags
+  that are too far away. `scripts/build.py` regenerates `sdkconfig` on every
+  run, so either add `CONFIG_PHONIEBOX_RC522_RX_GAIN=<n>` to the variant's
+  `sdkconfig_append` in `config.json`, or set it in `menuconfig` and flash with
+  `idf.py` immediately afterwards.
 
 ## SD card layout
 

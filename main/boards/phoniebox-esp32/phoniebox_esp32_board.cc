@@ -151,7 +151,8 @@ private:
         }
 
         rfid_reader_ = std::make_unique<Rc522RfidReader>(PHONIEBOX_SPI_HOST, RFID_CS_PIN,
-                                                         RFID_RST_PIN, RFID_IRQ_PIN);
+                                                         RFID_RST_PIN, RFID_IRQ_PIN,
+                                                         CONFIG_PHONIEBOX_RC522_RX_GAIN);
         if (!rfid_reader_->Initialize()) {
             ESP_LOGW(TAG, "Continuing without an RFID reader");
         }

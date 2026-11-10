@@ -15,11 +15,15 @@
  * The board owns the SPI bus (it is usually shared with an SD card); this
  * driver only adds its own chip-select device. Poll ReadCard() from a single
  * task at a modest rate (about 50-100 ms).
+ *
+ * rx_gain selects the receiver gain written to RFCfgReg (0 = minimum,
+ * 7 = maximum read range).
  */
 class Rc522RfidReader : public RfidReader {
 public:
     Rc522RfidReader(spi_host_device_t host, gpio_num_t cs_pin, gpio_num_t rst_pin,
-                    gpio_num_t irq_pin = GPIO_NUM_NC, uint32_t clock_hz = 4 * 1000 * 1000);
+                    gpio_num_t irq_pin = GPIO_NUM_NC, uint8_t rx_gain = 7,
+                    uint32_t clock_hz = 4 * 1000 * 1000);
     ~Rc522RfidReader() override;
 
     bool Initialize() override;
@@ -56,6 +60,7 @@ private:
     gpio_num_t cs_pin_;
     gpio_num_t rst_pin_;
     gpio_num_t irq_pin_;
+    uint8_t rx_gain_;
     uint32_t clock_hz_;
     spi_device_handle_t device_ = nullptr;
 

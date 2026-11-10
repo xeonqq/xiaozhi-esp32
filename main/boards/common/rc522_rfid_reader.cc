@@ -89,8 +89,13 @@ std::string ToHex(const uint8_t* data, size_t length) {
 }  // namespace
 
 Rc522RfidReader::Rc522RfidReader(spi_host_device_t host, gpio_num_t cs_pin, gpio_num_t rst_pin,
-                                 gpio_num_t irq_pin, uint32_t clock_hz)
-    : host_(host), cs_pin_(cs_pin), rst_pin_(rst_pin), irq_pin_(irq_pin), clock_hz_(clock_hz) {}
+                                 gpio_num_t irq_pin, uint8_t rx_gain, uint32_t clock_hz)
+    : host_(host),
+      cs_pin_(cs_pin),
+      rst_pin_(rst_pin),
+      irq_pin_(irq_pin),
+      rx_gain_(rx_gain & 0x07),
+      clock_hz_(clock_hz) {}
 
 Rc522RfidReader::~Rc522RfidReader() {
     if (irq_pin_ != GPIO_NUM_NC) {
@@ -153,12 +158,13 @@ bool Rc522RfidReader::Initialize() {
     WriteRegister(kModeReg, 0x3D);
 
     AntennaOn();
-    SetAntennaGain(7);
+    SetAntennaGain(rx_gain_);
     SetupIrq();
 
     // Temporary bring-up diagnostics: verify the RF configuration actually
-    // stuck. Expected: TxControl 0x83, RFCfg 0x78, TxASK 0x40, Mode 0x3D,
-    // TMode 0x80, TPrescaler 0xA9, reload 0x03E8.
+    // stuck. Expected: TxControl 0x83, RFCfg with the gain in bits 6:4 (0x78
+    // for the default gain 7), TxASK 0x40, Mode 0x3D, TMode 0x80,
+    // TPrescaler 0xA9, reload 0x03E8.
     ESP_LOGI(TAG, "MFRC522 config: TxControl 0x%02X RFCfg 0x%02X TxASK 0x%02X Mode 0x%02X "
                   "TMode 0x%02X TPre 0x%02X Reload 0x%02X%02X",
              ReadRegister(kTxControlReg), ReadRegister(kRFCfgReg), ReadRegister(kTxASKReg),

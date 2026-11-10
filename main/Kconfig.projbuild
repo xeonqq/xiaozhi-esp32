@@ -698,6 +698,17 @@ config PHONIEBOX_ENABLED
         controlling playback. Requires a board that provides an RfidReader and
         a Storage instance.
 
+config PHONIEBOX_RC522_RX_GAIN
+    int "Phoniebox: MFRC522/RC522 receiver gain (0-7)"
+    depends on BOARD_TYPE_ESP32_PHONIEBOX
+    range 0 7
+    default 7
+    help
+        Receiver gain written to the MFRC522 RFCfgReg. Higher values increase
+        read range but also amplify noise and detuning from nearby metal or
+        the shared SD card wiring. 0 selects the minimum gain and 7 the
+        maximum (default).
+
 config RESPEAKER_I2S_EXTERNAL_CLOCK_48K
     bool "ReSpeaker: XMOS supplies 48 kHz I2S clocks"
     depends on BOARD_TYPE_SEEED_XIAO_ESP32S3_RESPEAKER_XVF3800
