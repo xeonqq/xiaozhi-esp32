@@ -1,5 +1,6 @@
 #include "rc522_rfid_reader.h"
 
+#include <esp_attr.h>
 #include <esp_log.h>
 #include <esp_rom_sys.h>
 #include <esp_timer.h>
@@ -88,10 +89,13 @@ std::string ToHex(const uint8_t* data, size_t length) {
 }  // namespace
 
 Rc522RfidReader::Rc522RfidReader(spi_host_device_t host, gpio_num_t cs_pin, gpio_num_t rst_pin,
-                                 uint32_t clock_hz)
-    : host_(host), cs_pin_(cs_pin), rst_pin_(rst_pin), clock_hz_(clock_hz) {}
+                                 gpio_num_t irq_pin, uint32_t clock_hz)
+    : host_(host), cs_pin_(cs_pin), rst_pin_(rst_pin), irq_pin_(irq_pin), clock_hz_(clock_hz) {}
 
 Rc522RfidReader::~Rc522RfidReader() {
+    if (irq_pin_ != GPIO_NUM_NC) {
+        gpio_isr_handler_remove(irq_pin_);
+    }
     if (device_ != nullptr) {
         spi_bus_remove_device(device_);
         device_ = nullptr;
@@ -150,6 +154,7 @@ bool Rc522RfidReader::Initialize() {
 
     AntennaOn();
     SetAntennaGain(7);
+    SetupIrq();
 
     // Temporary bring-up diagnostics: verify the RF configuration actually
     // stuck. Expected: TxControl 0x83, RFCfg 0x78, TxASK 0x40, Mode 0x3D,
@@ -181,8 +186,10 @@ void Rc522RfidReader::LogPollDiagnostic() {
     }
     last_diag_us_ = now;
     // Temporary bring-up diagnostic for the no-PICC case.
-    ESP_LOGW(TAG, "No PICC response (ComIrq 0x%02X Error 0x%02X FifoLevel 0x%02X)",
-             ReadRegister(kComIrqReg), ReadRegister(kErrorReg), ReadRegister(kFifoLevelReg));
+    ESP_LOGW(TAG, "No PICC response (ComIrq 0x%02X Error 0x%02X FifoLevel 0x%02X IRQ=%d edges=%lu)",
+             ReadRegister(kComIrqReg), ReadRegister(kErrorReg), ReadRegister(kFifoLevelReg),
+             irq_pin_ != GPIO_NUM_NC ? gpio_get_level(irq_pin_) : -1,
+             static_cast<unsigned long>(irq_edges_));
 }
 
 bool Rc522RfidReader::ReadCard(std::string& uid) {
@@ -295,9 +302,42 @@ void Rc522RfidReader::SetAntennaGain(uint8_t gain) {
     WriteRegister(kRFCfgReg, value);
 }
 
+void Rc522RfidReader::SetupIrq() {
+    if (irq_pin_ == GPIO_NUM_NC) {
+        return;
+    }
+
+    gpio_config_t irq_config = {};
+    irq_config.pin_bit_mask = 1ULL << irq_pin_;
+    irq_config.mode = GPIO_MODE_INPUT;
+    irq_config.pull_up_en = GPIO_PULLUP_ENABLE;
+    irq_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    irq_config.intr_type = GPIO_INTR_ANYEDGE;
+    ESP_ERROR_CHECK(gpio_config(&irq_config));
+
+    // The button component may already own the shared GPIO ISR service.
+    esp_err_t err = gpio_install_isr_service(0);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "GPIO ISR service unavailable: %s", esp_err_to_name(err));
+        return;
+    }
+    ESP_ERROR_CHECK(gpio_isr_handler_add(irq_pin_, IrqIsrHandler, this));
+
+    // Push-pull IRQ output, forwarding the command-relevant sources
+    // (Timer/Err/Idle/Rx/Tx) so the line toggles during each transceive.
+    com_ien_value_ = 0x80 | 0x73;
+    ESP_LOGI(TAG, "IRQ debugging enabled on GPIO %d", irq_pin_);
+}
+
+void IRAM_ATTR Rc522RfidReader::IrqIsrHandler(void* arg) {
+    auto* reader = static_cast<Rc522RfidReader*>(arg);
+    uint32_t edges = reader->irq_edges_;
+    reader->irq_edges_ = edges + 1;
+}
+
 bool Rc522RfidReader::RequestA(uint16_t& atqa) {
     WriteRegister(kCommandReg, kPcdIdle);
-    WriteRegister(kComIEnReg, 0x00);
+    WriteRegister(kComIEnReg, com_ien_value_);
     WriteRegister(kComIrqReg, 0x7F);
     WriteRegister(kFifoLevelReg, 0x80);
     // Do not clear values received after a collision.
@@ -330,7 +370,7 @@ bool Rc522RfidReader::RequestA(uint16_t& atqa) {
 
 bool Rc522RfidReader::Anticoll(uint8_t sel_code, uint8_t* buffer, uint8_t& length) {
     WriteRegister(kCommandReg, kPcdIdle);
-    WriteRegister(kComIEnReg, 0x00);
+    WriteRegister(kComIEnReg, com_ien_value_);
     WriteRegister(kComIrqReg, 0x7F);
     WriteRegister(kFifoLevelReg, 0x80);
 
@@ -361,7 +401,7 @@ bool Rc522RfidReader::Anticoll(uint8_t sel_code, uint8_t* buffer, uint8_t& lengt
 
 bool Rc522RfidReader::Select(uint8_t sel_code, const uint8_t* uid, uint8_t length) {
     WriteRegister(kCommandReg, kPcdIdle);
-    WriteRegister(kComIEnReg, 0x00);
+    WriteRegister(kComIEnReg, com_ien_value_);
     WriteRegister(kComIrqReg, 0x7F);
     WriteRegister(kFifoLevelReg, 0x80);
 

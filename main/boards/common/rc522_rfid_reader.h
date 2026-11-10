@@ -19,7 +19,7 @@
 class Rc522RfidReader : public RfidReader {
 public:
     Rc522RfidReader(spi_host_device_t host, gpio_num_t cs_pin, gpio_num_t rst_pin,
-                    uint32_t clock_hz = 4 * 1000 * 1000);
+                    gpio_num_t irq_pin = GPIO_NUM_NC, uint32_t clock_hz = 4 * 1000 * 1000);
     ~Rc522RfidReader() override;
 
     bool Initialize() override;
@@ -34,6 +34,8 @@ private:
     bool DetectVersion();
     bool SoftReset();
     void AntennaOn();
+    void SetupIrq();
+    static void IrqIsrHandler(void* arg);
     void SetAntennaGain(uint8_t gain);
     bool RequestA(uint16_t& atqa);
     void LogCardDiagnostic(uint16_t atqa);
@@ -53,8 +55,12 @@ private:
     spi_host_device_t host_;
     gpio_num_t cs_pin_;
     gpio_num_t rst_pin_;
+    gpio_num_t irq_pin_;
     uint32_t clock_hz_;
     spi_device_handle_t device_ = nullptr;
+
+    uint8_t com_ien_value_ = 0x00;
+    volatile uint32_t irq_edges_ = 0;
 
     bool ready_ = false;
     bool card_present_ = false;

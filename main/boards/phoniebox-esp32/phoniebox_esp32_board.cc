@@ -150,8 +150,8 @@ private:
             ESP_LOGW(TAG, "Continuing without an SD card");
         }
 
-        rfid_reader_ =
-            std::make_unique<Rc522RfidReader>(PHONIEBOX_SPI_HOST, RFID_CS_PIN, RFID_RST_PIN);
+        rfid_reader_ = std::make_unique<Rc522RfidReader>(PHONIEBOX_SPI_HOST, RFID_CS_PIN,
+                                                         RFID_RST_PIN, RFID_IRQ_PIN);
         if (!rfid_reader_->Initialize()) {
             ESP_LOGW(TAG, "Continuing without an RFID reader");
         }

@@ -35,6 +35,8 @@
 
 #define RFID_CS_PIN GPIO_NUM_21
 #define RFID_RST_PIN GPIO_NUM_17
+// MFRC522 IRQ is optional for polling, but wired here for bring-up debugging.
+#define RFID_IRQ_PIN GPIO_NUM_22
 
 // ---------------------------------------------------------------------------
 // Buttons. BOOT keeps the normal XiaoZhi behaviour (chat / Wi-Fi config).
